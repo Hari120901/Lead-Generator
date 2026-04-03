@@ -9,7 +9,7 @@ import re
 # CONFIG
 # ------------------------------
 st.set_page_config(page_title="Ad Intelligence Lead Generator", layout="wide")
-st.title("📊 Business Leads with Ad Activity Intelligence")
+st.title("📊 Business Leads with Real Ad Activity Status")
 
 GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 headers = {"User-Agent": "Mozilla/5.0"}
@@ -58,7 +58,7 @@ def extract_emails(website):
         return "Error"
 
 # ------------------------------
-# GOOGLE ADS DETECTION
+# GOOGLE ADS DETECTION (LIVE SIGNAL)
 # ------------------------------
 def check_google_ads(name, location):
     try:
@@ -73,7 +73,7 @@ def check_google_ads(name, location):
         return False
 
 # ------------------------------
-# DETECT AD PLATFORMS
+# DETECT AD PLATFORMS (PAST SIGNAL)
 # ------------------------------
 def detect_ad_platforms(website):
     if not website:
@@ -101,51 +101,25 @@ def detect_ad_platforms(website):
         return []
 
 # ------------------------------
-# AD SCORE
+# FINAL AD STATUS (CORRECT LOGIC)
 # ------------------------------
-def calculate_ad_score(platforms, google_ads, website):
-    score = 0
+def get_ad_activity_status(google_ads, platforms, website):
 
+    # Active NOW (strong signal)
     if google_ads:
-        score += 1
+        return "🟢 Active Now"
 
-    if "Meta" in platforms:
-        score += 1
+    # Past advertiser (has tracking but no live ads)
+    elif len(platforms) > 0:
+        return "🟠 Past Advertiser (Last active unknown)"
 
-    if "Google" in platforms:
-        score += 1
+    # Website only
+    elif website:
+        return "🟡 No Recent Ads (Website only)"
 
-    if any(p in platforms for p in ["LinkedIn", "TikTok"]):
-        score += 1
-
-    if website:
-        score += 1
-
-    return score
-
-# ------------------------------
-# ACTIVITY LEVEL
-# ------------------------------
-def get_activity_level(score):
-    if score <= 1:
-        return "Low"
-    elif score <= 3:
-        return "Medium"
+    # No signals
     else:
-        return "High"
-
-# ------------------------------
-# ACTIVITY STATUS (NEW FIX)
-# ------------------------------
-def get_ad_status(score):
-    if score >= 4:
-        return "Active (High Confidence)"
-    elif score >= 2:
-        return "Likely Active"
-    elif score == 1:
-        return "Low Signals"
-    else:
-        return "No Activity Detected"
+        return "🔴 No Ads Detected"
 
 # ------------------------------
 # MAIN PROCESS
@@ -176,9 +150,11 @@ if st.button("Generate Leads with Ad Insights"):
         platforms = detect_ad_platforms(website)
         google_ads_flag = check_google_ads(name, location)
 
-        score = calculate_ad_score(platforms, google_ads_flag, website)
-        activity_level = get_activity_level(score)
-        ad_status = get_ad_status(score)
+        ad_status = get_ad_activity_status(
+            google_ads_flag,
+            platforms,
+            website
+        )
 
         results.append([
             name,
@@ -190,8 +166,6 @@ if st.button("Generate Leads with Ad Insights"):
             reviews,
             ", ".join(platforms) if platforms else "None",
             "Yes" if google_ads_flag else "No",
-            score,
-            activity_level,
             ad_status
         ])
 
@@ -206,10 +180,8 @@ if st.button("Generate Leads with Ad Insights"):
         "Emails",
         "Rating",
         "Reviews",
-        "Ad Platforms",
+        "Ad Platforms Detected",
         "Google Ads Running",
-        "Ad Score (0-5)",
-        "Ad Activity Level",
         "Ad Activity Status"
     ])
 

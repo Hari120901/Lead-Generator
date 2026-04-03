@@ -66,9 +66,16 @@ def check_google_ads(name, location):
         url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
         html = requests.get(url, headers=headers, timeout=5).text.lower()
 
-        if "sponsored" in html or "ad ·" in html:
-            return True
-        return False
+        ad_signals = [
+            "sponsored",
+            "ad ·",
+            "ads by google",
+            "googleadservices",
+            "/aclk?"
+        ]
+
+        return any(signal in html for signal in ad_signals)
+
     except:
         return False
 
@@ -85,39 +92,45 @@ def detect_ad_platforms(website):
 
         if "fbq(" in html or "facebook.com" in html:
             platforms.append("Meta")
-
         if "googletagmanager" in html or "googleads" in html:
             platforms.append("Google")
-
         if "linkedin" in html:
             platforms.append("LinkedIn")
-
         if "tiktok" in html:
             platforms.append("TikTok")
 
         return platforms
-
     except:
         return []
 
 # ------------------------------
-# FINAL AD STATUS (CORRECT LOGIC)
+# BRAND PRESENCE (SUPPORT SIGNAL)
 # ------------------------------
-def get_ad_activity_status(google_ads, platforms, website):
+def check_brand_presence(name, location):
+    try:
+        query = f"{name} {location}"
+        url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+        html = requests.get(url, headers=headers, timeout=5).text.lower()
 
-    # Active NOW (strong signal)
+        if name.lower() in html:
+            return True
+        return False
+    except:
+        return False
+
+# ------------------------------
+# FINAL AD STATUS (MULTI-SIGNAL LOGIC)
+# ------------------------------
+def get_ad_activity_status(google_ads, platforms, website, brand_presence):
+
     if google_ads:
-        return "🟢 Active Now"
-
-    # Past advertiser (has tracking but no live ads)
+        return "🟢 Active Now (High Confidence)"
+    elif brand_presence and len(platforms) > 0:
+        return "🟡 Likely Active (Hidden Ads)"
     elif len(platforms) > 0:
-        return "🟠 Past Advertiser (Last active unknown)"
-
-    # Website only
+        return "🟠 Past Advertiser"
     elif website:
-        return "🟡 No Recent Ads (Website only)"
-
-    # No signals
+        return "⚪ No Signals (Website only)"
     else:
         return "🔴 No Ads Detected"
 
@@ -131,7 +144,6 @@ if st.button("Generate Leads with Ad Insights"):
         st.stop()
 
     query = f"{category} in {location}, India"
-
     with st.spinner("Fetching businesses..."):
         businesses = get_places(query)
 
@@ -146,14 +158,15 @@ if st.button("Generate Leads with Ad Insights"):
         phone, website, rating, reviews = get_details(place_id)
         emails = extract_emails(website)
 
-        # Ad Intelligence
         platforms = detect_ad_platforms(website)
         google_ads_flag = check_google_ads(name, location)
+        brand_presence = check_brand_presence(name, location)
 
         ad_status = get_ad_activity_status(
             google_ads_flag,
             platforms,
-            website
+            website,
+            brand_presence
         )
 
         results.append([
@@ -191,8 +204,6 @@ if st.button("Generate Leads with Ad Insights"):
     # ------------------------------
     # DOWNLOAD OPTIONS
     # ------------------------------
-
-    # CSV (always works)
     csv = df.to_csv(index=False).encode('utf-8')
     st.download_button(
         "⬇️ Download CSV",
@@ -201,7 +212,6 @@ if st.button("Generate Leads with Ad Insights"):
         mime="text/csv"
     )
 
-    # Excel (safe fallback)
     try:
         output = BytesIO()
         df.to_excel(output, index=False, engine="openpyxl")

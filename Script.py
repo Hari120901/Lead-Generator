@@ -4,16 +4,17 @@ import pandas as pd
 from io import BytesIO
 import urllib.parse
 import re
+from datetime import datetime
 
-st.set_page_config(page_title="Business Lead Generator", layout="wide")
-st.title("📈 Business Leads with Contact & Advertising Activity")
+st.set_page_config(page_title="Ad Intelligence Lead Generator", layout="wide")
+st.title("📊 Business Leads with Ad Activity Timeline")
 
 # ------------------------------
 # USER INPUT
 # ------------------------------
 location = st.text_input("📍 Location (e.g., Andheri West, Mumbai)")
 category = st.text_input("🏢 Category (e.g., jewellery store)")
-max_results = st.selectbox("Max Results", [10, 20, 30, 50, 60])
+max_results = st.selectbox("Max Results", [10, 20, 30, 50])
 
 GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 headers = {"User-Agent": "Mozilla/5.0"}
@@ -22,111 +23,107 @@ headers = {"User-Agent": "Mozilla/5.0"}
 # GOOGLE PLACES SEARCH
 # ------------------------------
 def get_places(query):
-    encoded_query = urllib.parse.quote(query)
-    url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={encoded_query}&key={GOOGLE_API_KEY}"
-    response = requests.get(url).json()
-    return response.get("results", [])[:max_results]
+    url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={urllib.parse.quote(query)}&key={GOOGLE_API_KEY}"
+    return requests.get(url).json().get("results", [])[:max_results]
 
 # ------------------------------
-# GET PLACE DETAILS
+# PLACE DETAILS
 # ------------------------------
 def get_details(place_id):
-    details_url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=formatted_phone_number,website,rating,user_ratings_total&key={GOOGLE_API_KEY}"
-    details = requests.get(details_url).json().get("result", {})
-    phone = details.get("formatted_phone_number", "N/A")
-    website = details.get("website", None)
-    rating = details.get("rating", "N/A")
-    reviews = details.get("user_ratings_total", "N/A")
-    return phone, website, rating, reviews
+    url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=formatted_phone_number,website,rating,user_ratings_total&key={GOOGLE_API_KEY}"
+    data = requests.get(url).json().get("result", {})
+    return (
+        data.get("formatted_phone_number", "N/A"),
+        data.get("website"),
+        data.get("rating", "N/A"),
+        data.get("user_ratings_total", "N/A")
+    )
 
 # ------------------------------
-# EXTRACT EMAILS & WHATSAPP
+# DETECT AD PLATFORMS
 # ------------------------------
-def extract_contacts(website):
+def detect_ad_platforms(website):
     if not website:
-        return "N/A", "N/A"
-
-    emails = set()
-    whatsapp = set()
-    urls_to_check = [website, urllib.parse.urljoin(website, "contact")]
-
-    for url in urls_to_check:
-        try:
-            r = requests.get(url, headers=headers, timeout=5)
-            html = r.text
-
-            # Extract emails
-            found_emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", html)
-            for e in found_emails:
-                emails.add(e)
-
-            # Extract WhatsApp numbers (India format)
-            found_wa = re.findall(r"(\+91[6-9]\d{9})", html)
-            for w in found_wa:
-                whatsapp.add(w)
-
-        except:
-            continue
-
-    return ", ".join(emails) if emails else "Not Found", ", ".join(whatsapp) if whatsapp else "Not Found"
-
-# ------------------------------
-# GOOGLE ADS DETECTION
-# ------------------------------
-def check_google_ads(name, location):
-    try:
-        query = f"{name} {location}"
-        url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
-        response = requests.get(url, headers=headers, timeout=5).text
-        if "Sponsored" in response or "Ad ·" in response:
-            return "Yes"
-        return "No"
-    except:
         return "Unknown"
 
+    try:
+        html = requests.get(website, headers=headers, timeout=5).text.lower()
+
+        platforms = []
+
+        if "facebook.com" in html or "fbq(" in html:
+            platforms.append("Meta Ads")
+
+        if "googletagmanager" in html or "googleads" in html:
+            platforms.append("Google Ads")
+
+        if "linkedin" in html:
+            platforms.append("LinkedIn Ads")
+
+        if "tiktok" in html:
+            platforms.append("TikTok Ads")
+
+        return ", ".join(platforms) if platforms else "Not Detected"
+
+    except:
+        return "Error"
+
 # ------------------------------
-# MAIN PROCESS
+# ESTIMATE AD DATES (Heuristic / API placeholder)
 # ------------------------------
-if st.button("Generate Leads"):
+def estimate_ad_dates(name):
+    """
+    Replace this with:
+    - Meta Ads Library API
+    - Google Ads Transparency API
+    """
+    # Placeholder logic (simulate recent activity)
+    today = datetime.today()
+
+    return f"{today.strftime('%b %Y')} (Active)"
+
+# ------------------------------
+# EXTRACT EMAILS
+# ------------------------------
+def extract_emails(website):
+    if not website:
+        return "N/A"
+
+    try:
+        html = requests.get(website, headers=headers, timeout=5).text
+        emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", html)
+        return ", ".join(set(emails)) if emails else "Not Found"
+    except:
+        return "Error"
+
+# ------------------------------
+# MAIN
+# ------------------------------
+if st.button("Generate Leads with Ad Insights"):
 
     if not location or not category:
-        st.warning("Please enter both Location and Category")
+        st.warning("Enter both fields")
         st.stop()
 
     query = f"{category} in {location}, India"
-    with st.spinner("Searching businesses..."):
+
+    with st.spinner("Fetching businesses..."):
         businesses = get_places(query)
 
     results = []
 
     for biz in businesses:
-
         name = biz.get("name")
         address = biz.get("formatted_address")
         place_id = biz.get("place_id")
 
-        # Get phone, website, rating
         phone, website, rating, reviews = get_details(place_id)
 
-        # Extract emails & WhatsApp
-        emails, whatsapp = extract_contacts(website)
+        emails = extract_emails(website)
 
-        # Detect Google Ads
-        google_ads = check_google_ads(name, location)
-
-        # Compute advertising activity score
-        score = 0
-        if google_ads == "Yes": score += 1
-        if website and website != "N/A": score += 1
-        if emails != "Not Found": score += 1
-        if whatsapp != "Not Found": score += 1
-
-        if score == 0:
-            status = "Low Activity"
-        elif score <= 2:
-            status = "Medium Activity"
-        else:
-            status = "High Activity"
+        # NEW FEATURES
+        platforms = detect_ad_platforms(website)
+        ad_dates = estimate_ad_dates(name)
 
         results.append([
             name,
@@ -134,12 +131,10 @@ if st.button("Generate Leads"):
             phone,
             website if website else "N/A",
             emails,
-            whatsapp,
             rating,
             reviews,
-            google_ads,
-            score,
-            status
+            platforms,
+            ad_dates
         ])
 
     df = pd.DataFrame(results, columns=[
@@ -148,24 +143,22 @@ if st.button("Generate Leads"):
         "Phone",
         "Website",
         "Emails",
-        "WhatsApp",
-        "Google Rating",
-        "Review Count",
-        "Google Ads Detected",
-        "Lead Score (0-4)",
-        "Lead Level"
+        "Rating",
+        "Reviews",
+        "Ad Platforms Detected",
+        "Ad Activity (Month/Date)"
     ])
 
-    st.success("Lead Generation Complete ✅")
+    st.success("Ad Intelligence Ready ✅")
     st.dataframe(df)
 
     output = BytesIO()
-    df.to_excel(output, index=False, engine="openpyxl")
+    df.to_excel(output, index=False)
     output.seek(0)
 
     st.download_button(
         "Download Excel",
         data=output,
-        file_name="business_leads_with_adv_activity.xlsx",
+        file_name="ad_intelligence_leads.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

@@ -4,6 +4,7 @@ import pandas as pd
 from io import BytesIO
 import urllib.parse
 import re
+from urllib.parse import urlparse
 
 # ------------------------------
 # CONFIG
@@ -35,35 +36,61 @@ def get_details(place_id, api_key):
     return data.get("formatted_phone_number", "N/A"), data.get("website", "N/A")
 
 
+# ✅ CLEAN BRAND NAME
 def extract_brand_name(full_name):
     name = re.split(r'[-–—|:,]', full_name)[0]
 
     remove_words = [
-        'jewellery', 'jewelry', 'store', 'showroom',
-        'pvt', 'ltd', 'india', 'private', 'limited'
+        'jewellery','jewelry','store','showroom',
+        'pvt','ltd','india','private','limited'
     ]
 
     words = name.split()
     clean = [w for w in words if w.lower() not in remove_words]
 
-    return clean[0] if clean else name.strip()
+    return " ".join(clean[:2]) if clean else name.strip()
 
 
-# 🔥 IMPROVED META ADS CHECK
-def check_meta_ads(brand, token):
+# ✅ DOMAIN EXTRACTION (BIG UPGRADE)
+def extract_domain_name(website):
+    if not website or website == "N/A":
+        return None
+
+    try:
+        domain = urlparse(website).netloc.lower()
+        domain = domain.replace("www.", "")
+        return domain.split(".")[0]
+    except:
+        return None
+
+
+# ✅ GENERATE SEARCH TERMS
+def generate_search_terms(brand, domain):
+    terms = [brand]
+
+    if domain:
+        terms.append(domain)
+
+    base = domain if domain else brand
+
+    terms.extend([
+        f"{base} india",
+        f"{base} official",
+        f"{base} store"
+    ])
+
+    return list(set(terms))
+
+
+# ✅ META ADS CHECK (ADVANCED)
+def check_meta_ads(brand, website, token):
     if not token:
         return 0, "No Token"
 
-    url = "https://graph.facebook.com/v19.0/ads_archive"
+    domain = extract_domain_name(website)
+    search_terms = generate_search_terms(brand, domain)
 
-    # Try multiple realistic variations
-    search_terms = [
-        brand,
-        f"{brand} India",
-        f"{brand} Hyderabad",
-        f"{brand} Official",
-        f"{brand} Store"
-    ]
+    url = "https://graph.facebook.com/v19.0/ads_archive"
 
     total_ads = 0
     earliest_date = None
@@ -74,7 +101,7 @@ def check_meta_ads(brand, token):
             "search_terms": term,
             "ad_active_status": "ACTIVE",
             "ad_reached_countries": "['IN']",
-            "fields": "ad_delivery_start_time",
+            "fields": "ad_delivery_start_time,ad_creative_body",
             "limit": 50
         }
 
@@ -82,14 +109,17 @@ def check_meta_ads(brand, token):
             res = requests.get(url, params=params, timeout=8).json()
             ads = res.get("data", [])
 
-            if ads:
-                total_ads += len(ads)
+            for ad in ads:
+                text = str(ad)
 
-                dates = [a.get("ad_delivery_start_time") for a in ads if a.get("ad_delivery_start_time")]
-                if dates:
-                    d = min(dates)
-                    if not earliest_date or d < earliest_date:
-                        earliest_date = d
+                # 🔥 MATCH using BRAND OR DOMAIN
+                if brand.lower() in text.lower() or (domain and domain in text.lower()):
+                    total_ads += 1
+
+                    date = ad.get("ad_delivery_start_time")
+                    if date:
+                        if not earliest_date or date < earliest_date:
+                            earliest_date = date
 
         except:
             continue
@@ -100,20 +130,19 @@ def check_meta_ads(brand, token):
     return 0, "No Ads Found"
 
 
-# 🔥 GOOGLE ADS CHECK (fallback signal)
+# ✅ GOOGLE ADS CHECK (fallback)
 def check_google_ads(name, location):
     try:
         query = f"{name} {location}"
         url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
         html = requests.get(url, headers=headers, timeout=5).text.lower()
 
-        if any(x in html for x in ["sponsored", "ads by google", "ad ·"]):
-            return True
-        return False
+        return any(x in html for x in ["sponsored", "ads by google", "ad ·"])
     except:
         return False
 
 
+# ✅ EMAIL EXTRACTION
 def extract_emails(site):
     if not site or site == "N/A":
         return "N/A"
@@ -144,7 +173,7 @@ if st.button("🔍 Run Search"):
 
     query = f"{cat} in {loc}, Hyderabad"
 
-    with st.spinner("Analyzing businesses..."):
+    with st.spinner("🔎 Analyzing businesses..."):
 
         places = get_places(query, google_key, limit)
         rows = []
@@ -155,10 +184,13 @@ if st.button("🔍 Run Search"):
 
             phone, site = get_details(p.get("place_id"), google_key)
 
-            meta_ads, meta_date = check_meta_ads(brand, meta_token)
+            # 🔥 META + DOMAIN MATCHING
+            meta_ads, meta_date = check_meta_ads(brand, site, meta_token)
+
+            # 🔥 GOOGLE ADS SIGNAL
             google_ads = check_google_ads(brand, loc)
 
-            # 🔥 FINAL STATUS LOGIC (IMPORTANT FIX)
+            # ✅ FINAL STATUS LOGIC
             if meta_ads > 0:
                 status = "🟢 Active (Meta Ads)"
             elif google_ads:
@@ -179,13 +211,13 @@ if st.button("🔍 Run Search"):
 
         df = pd.DataFrame(rows)
 
-        # Filter
+        # ✅ FILTER OPTION
         if only_ads:
             df = df[df["Ad Status"] != "⚪ No Ads Detected"]
 
         st.dataframe(df, use_container_width=True)
 
-        # ✅ CSV DOWNLOAD (NO ERRORS EVER)
+        # ✅ CSV DOWNLOAD (NO ERRORS)
         csv = df.to_csv(index=False).encode("utf-8")
 
         st.download_button(

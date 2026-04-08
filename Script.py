@@ -5,7 +5,6 @@ from io import BytesIO
 import urllib.parse
 import re
 from urllib.parse import urlparse
-from fuzzywuzzy import fuzz
 
 # ------------------------------
 # CONFIG
@@ -25,33 +24,28 @@ headers = {"User-Agent": "Mozilla/5.0"}
 # FUNCTIONS
 # ------------------------------
 
-# 1️⃣ Google Places search
 def get_places(query, api_key, max_res):
     url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={urllib.parse.quote(query)}&key={api_key}"
     res = requests.get(url).json()
     return res.get("results", [])[:max_res]
 
-# 2️⃣ Get details of a place
 def get_details(place_id, api_key):
     url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=formatted_phone_number,website&key={api_key}"
     data = requests.get(url).json().get("result", {})
     return data.get("formatted_phone_number", "N/A"), data.get("website", "N/A")
 
-# 3️⃣ Clean brand name
 def extract_brand_name(full_name):
     name = re.split(r'[-–—|:,]', full_name)[0]
     noise = ['jewellery','jewelry','store','showroom','pvt','ltd','india','private','limited']
     words = [w for w in name.split() if w.lower() not in noise]
     return " ".join(words[:2]).strip() if words else name.strip()
 
-# 4️⃣ Extract domain from website
 def extract_domain_name(website):
     if not website or website=="N/A":
         return None
     domain = urlparse(website).netloc.lower().replace("www.", "")
     return domain.split('.')[0]
 
-# 5️⃣ Generate search terms for Meta
 def generate_search_terms(brand, domain):
     terms = [brand]
     if domain:
@@ -60,11 +54,10 @@ def generate_search_terms(brand, domain):
     terms += [f"{base} india", f"{base} official", f"{base} store"]
     return list(set(terms))
 
-# 6️⃣ Fuzzy matching
-def is_match(name1, name2, threshold=80):
-    return fuzz.token_set_ratio(name1.lower(), name2.lower()) >= threshold
+def is_match(name1, name2):
+    # simple match check, avoids fuzzywuzzy
+    return name1.lower() in name2.lower() or name2.lower() in name1.lower()
 
-# 7️⃣ Check Meta Ads
 def check_meta_ads(brand, website, token):
     if not token:
         return 0, "No Token"
@@ -95,7 +88,6 @@ def check_meta_ads(brand, website, token):
             continue
     return total_ads, earliest_date.split("T")[0] if earliest_date else "No Ads Found"
 
-# 8️⃣ Check Google Ads presence
 def check_google_ads(name, location):
     try:
         query = f"{name} {location}"
@@ -105,7 +97,6 @@ def check_google_ads(name, location):
     except:
         return False
 
-# 9️⃣ Extract emails
 def extract_emails(site):
     if not site or site == "N/A":
         return "N/A"

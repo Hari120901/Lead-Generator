@@ -1,4 +1,4 @@
 streamlit
 requests
 pandas
-xlsxwriter
+xlsxwriter==3.2.0

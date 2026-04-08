@@ -6,14 +6,13 @@ import urllib.parse
 import re
 
 # ------------------------------
-# CONFIG
+# CONFIG & UI
 # ------------------------------
 st.set_page_config(page_title="Ad Intelligence Lead Gen Pro", layout="wide")
 st.title("📊 Lead Generator: Google + Meta Ad Insights")
 
 with st.sidebar:
     st.header("API Configuration")
-    # Using secrets for Google Key is safer, but manual input works too
     google_key = st.text_input("Google Places API Key", value=st.secrets.get("GOOGLE_API_KEY", ""), type="password")
     meta_token = st.text_input("Meta Ad Library Access Token", type="password")
 
@@ -38,18 +37,31 @@ def get_details(place_id, api_key):
         data.get("user_ratings_total", "N/A")
     )
 
+def extract_brand_name(full_name):
+    """
+    Strips location data and suffixes to get a clean brand name.
+    Example: 'CaratLane - Kondapur, Hyderabad' -> 'CaratLane'
+    """
+    # 1. Split by common delimiters
+    name = re.split(r'[-–—|:,]', full_name)[0]
+    
+    # 2. Remove common city/area noise words
+    noise = ['kondapur', 'hyderabad', 'telangana', 'gachibowli', 'pvt', 'ltd', 'india', 'store', 'showroom']
+    words = name.split()
+    clean_words = [w for w in words if w.lower() not in noise]
+    
+    return " ".join(clean_words).strip()
+
 def check_meta_ads_detailed(business_name, token):
-    """Smart Search: Strips location names to find brand-level ads"""
     if not token: return 0, "Token Missing"
     
-    # 1. CLEANING: Remove branch info (e.g., 'CaratLane - Kondapur' -> 'CaratLane')
-    # This ensures we find the ~200 results you see in the Ad Library
-    clean_name = re.split(r'[-–—,]', business_name)[0].strip()
+    # GET THE CLEAN BRAND NAME
+    brand_query = extract_brand_name(business_name)
     
     url = "https://graph.facebook.com/v19.0/ads_archive"
     params = {
         'access_token': token,
-        'search_terms': clean_name, # Keywords, not exact phrase
+        'search_terms': brand_query, 
         'ad_active_status': 'ACTIVE',
         'ad_reached_countries': "['IN']",
         'fields': 'id,ad_delivery_start_time',
@@ -60,7 +72,6 @@ def check_meta_ads_detailed(business_name, token):
         ads = response.get('data', [])
         if not ads: return 0, "No Active Ads"
         
-        # 2. DATE EXTRACTION: Find the oldest 'Started running on' date
         start_dates = [a.get('ad_delivery_start_time') for a in ads if a.get('ad_delivery_start_time')]
         oldest_ad = min(start_dates).split('T')[0] if start_dates else "Date Unknown"
         return len(ads), oldest_ad
@@ -83,7 +94,7 @@ def extract_emails(website):
     except: return "Error"
 
 # ------------------------------
-# INTERFACE
+# UI / MAIN
 # ------------------------------
 
 loc_input = st.text_input("📍 Location", value="Kondapur")
@@ -92,18 +103,18 @@ max_res = st.slider("Max Leads", 5, 50, 10)
 
 if st.button("🔍 Run Intelligence Search"):
     if not google_key:
-        st.error("Enter Google API Key in sidebar.")
+        st.error("Enter Google API Key.")
         st.stop()
 
-    query = f"{cat_input} in {loc_input}, India"
-    with st.spinner("Scouting leads and checking Meta Ad Library..."):
+    query = f"{cat_input} in {loc_input}, Hyderabad"
+    with st.spinner("Filtering for Brand Ads..."):
         places = get_places(query, google_key, max_res)
         results = []
         for p in places:
             name = p.get("name")
             phone, web, rate, revs = get_details(p.get("place_id"), google_key)
             
-            # Use the cleaning logic to check Meta
+            # This now uses the extract_brand_name logic inside
             meta_count, meta_date = check_meta_ads_detailed(name, meta_token)
             google_ad = "Yes" if check_google_ads(name, loc_input) else "No"
             
@@ -120,11 +131,10 @@ if st.button("🔍 Run Intelligence Search"):
         df = pd.DataFrame(results)
         st.dataframe(df, use_container_width=True)
 
-        # Excel Export logic - Fixed with Buffer and Openpyxl
         buffer = BytesIO()
         try:
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
-            st.download_button("⬇️ Download Excel Report", data=buffer.getvalue(), file_name=f"Leads_{loc_input}.xlsx")
-        except ModuleNotFoundError:
-            st.warning("Excel export is initializing. Please 'Reboot' the app in Streamlit settings.")
+            st.download_button("⬇️ Download Excel", data=buffer.getvalue(), file_name=f"Leads_{loc_input}.xlsx")
+        except:
+            st.info("Export ready. If error occurs, please reboot Streamlit app to install openpyxl.")

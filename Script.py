@@ -59,34 +59,34 @@ def is_match(name1, name2):
     return name1.lower() in name2.lower() or name2.lower() in name1.lower()
 
 def check_meta_ads(brand, website, token):
-    if not token:
-        return 0, "No Token"
-    domain = extract_domain_name(website)
-    search_terms = generate_search_terms(brand, domain)
+    if not token: return 0, "No Token"
+    
+    # We use the clean brand name directly
     url = "https://graph.facebook.com/v19.0/ads_archive"
-    total_ads = 0
-    earliest_date = None
-    for term in search_terms:
-        params = {
-            "access_token": token,
-            "search_terms": term,
-            "ad_active_status": "ACTIVE",
-            "ad_reached_countries": "['IN']",
-            "fields": "ad_delivery_start_time,ad_creative_body",
-            "limit": 50
-        }
-        try:
-            res = requests.get(url, params=params, timeout=8).json()
-            for ad in res.get("data", []):
-                text = str(ad)
-                if brand.lower() in text.lower() or (domain and domain in text.lower()):
-                    total_ads += 1
-                    date = ad.get("ad_delivery_start_time")
-                    if date and (earliest_date is None or date < earliest_date):
-                        earliest_date = date
-        except:
-            continue
-    return total_ads, earliest_date.split("T")[0] if earliest_date else "No Ads Found"
+    params = {
+        "access_token": token,
+        "search_terms": f'"{brand}"', # Using quotes for exact brand match
+        "ad_active_status": "ACTIVE",
+        "ad_reached_countries": "['IN']",
+        "fields": "ad_delivery_start_time",
+        "limit": 50
+    }
+    
+    try:
+        res = requests.get(url, params=params, timeout=8).json()
+        ads = res.get("data", [])
+        
+        if not ads:
+            return 0, "No Ads Found"
+            
+        total_ads = len(ads)
+        # Get the oldest date from the results
+        dates = [ad.get("ad_delivery_start_time") for ad in ads if ad.get("ad_delivery_start_time")]
+        earliest_date = min(dates).split("T")[0] if dates else "Date Unknown"
+        
+        return total_ads, earliest_date
+    except:
+        return 0, "API Error"
 
 def check_google_ads(name, location):
     try:

@@ -13,13 +13,14 @@ st.title("📊 Lead Generator: Google + Meta Ad Insights")
 
 with st.sidebar:
     st.header("API Configuration")
+    # Using secrets for Google Key is safer, but manual input works too
     google_key = st.text_input("Google Places API Key", value=st.secrets.get("GOOGLE_API_KEY", ""), type="password")
     meta_token = st.text_input("Meta Ad Library Access Token", type="password")
 
 headers = {"User-Agent": "Mozilla/5.0"}
 
 # ------------------------------
-# LOGIC FUNCTIONS
+# CORE LOGIC
 # ------------------------------
 
 def get_places(query, api_key, max_res):
@@ -38,17 +39,17 @@ def get_details(place_id, api_key):
     )
 
 def check_meta_ads_detailed(business_name, token):
-    """Smart Search: Strips branch names to find the main brand ads"""
+    """Smart Search: Strips location names to find brand-level ads"""
     if not token: return 0, "Token Missing"
     
-    # Cleaning: Removes 'Kondapur', 'Mumbai', etc. from the search
-    # Turns 'CaratLane - Kondapur' -> 'CaratLane'
+    # 1. CLEANING: Remove branch info (e.g., 'CaratLane - Kondapur' -> 'CaratLane')
+    # This ensures we find the ~200 results you see in the Ad Library
     clean_name = re.split(r'[-–—,]', business_name)[0].strip()
     
     url = "https://graph.facebook.com/v19.0/ads_archive"
     params = {
         'access_token': token,
-        'search_terms': clean_name,
+        'search_terms': clean_name, # Keywords, not exact phrase
         'ad_active_status': 'ACTIVE',
         'ad_reached_countries': "['IN']",
         'fields': 'id,ad_delivery_start_time',
@@ -59,6 +60,7 @@ def check_meta_ads_detailed(business_name, token):
         ads = response.get('data', [])
         if not ads: return 0, "No Active Ads"
         
+        # 2. DATE EXTRACTION: Find the oldest 'Started running on' date
         start_dates = [a.get('ad_delivery_start_time') for a in ads if a.get('ad_delivery_start_time')]
         oldest_ad = min(start_dates).split('T')[0] if start_dates else "Date Unknown"
         return len(ads), oldest_ad
@@ -84,27 +86,29 @@ def extract_emails(website):
 # INTERFACE
 # ------------------------------
 
-location = st.text_input("📍 Location", value="Kondapur")
-category = st.text_input("🏢 Category", value="Jewellery Store")
-max_results = st.slider("Leads", 5, 50, 10)
+loc_input = st.text_input("📍 Location", value="Kondapur")
+cat_input = st.text_input("🏢 Category", value="Jewellery Store")
+max_res = st.slider("Max Leads", 5, 50, 10)
 
 if st.button("🔍 Run Intelligence Search"):
     if not google_key:
         st.error("Enter Google API Key in sidebar.")
         st.stop()
 
-    query = f"{category} in {location}, India"
-    with st.spinner("Fetching Data..."):
-        places = get_places(query, google_key, max_results)
-        leads = []
+    query = f"{cat_input} in {loc_input}, India"
+    with st.spinner("Scouting leads and checking Meta Ad Library..."):
+        places = get_places(query, google_key, max_res)
+        results = []
         for p in places:
             name = p.get("name")
             phone, web, rate, revs = get_details(p.get("place_id"), google_key)
-            google_ad = "Yes" if check_google_ads(name, location) else "No"
-            meta_count, meta_date = check_meta_ads_detailed(name, meta_token)
             
-            leads.append({
-                "Business": name,
+            # Use the cleaning logic to check Meta
+            meta_count, meta_date = check_meta_ads_detailed(name, meta_token)
+            google_ad = "Yes" if check_google_ads(name, loc_input) else "No"
+            
+            results.append({
+                "Business Name": name,
                 "Ad Status": f"🟢 {meta_count} Ads" if meta_count > 0 else "⚪ Inactive",
                 "Active Since": meta_date,
                 "Google Ads": google_ad,
@@ -113,12 +117,14 @@ if st.button("🔍 Run Intelligence Search"):
                 "Website": web
             })
 
-        df = pd.DataFrame(leads)
+        df = pd.DataFrame(results)
         st.dataframe(df, use_container_width=True)
 
-        # Excel Export (Requires openpyxl)
+        # Excel Export logic - Fixed with Buffer and Openpyxl
         buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
-        
-        st.download_button("⬇️ Download Excel", data=buffer.getvalue(), file_name=f"Leads_{location}.xlsx")
+        try:
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False)
+            st.download_button("⬇️ Download Excel Report", data=buffer.getvalue(), file_name=f"Leads_{loc_input}.xlsx")
+        except ModuleNotFoundError:
+            st.warning("Excel export is initializing. Please 'Reboot' the app in Streamlit settings.")

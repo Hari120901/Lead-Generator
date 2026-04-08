@@ -4,225 +4,92 @@ import pandas as pd
 from io import BytesIO
 import urllib.parse
 import re
-from urllib.parse import urlparse
 
 # ------------------------------
-# CONFIG
+# CONFIG & UI
 # ------------------------------
 st.set_page_config(page_title="Lead Gen Pro", layout="wide")
-st.title("📊 Lead Generator: Google + Meta Ads Intelligence")
+st.title("📊 Lead Generator: Discovery Mode")
 
 with st.sidebar:
     st.header("API Configuration")
     google_key = st.text_input("Google Places API Key", type="password")
     meta_token = st.text_input("Meta Ad Library Token", type="password")
-    only_ads = st.checkbox("Show Only Ad-Active Businesses", value=False)
+    mode = st.radio("Search Mode", ["Google First (Local)", "Meta First (Discovery)"])
 
 headers = {"User-Agent": "Mozilla/5.0"}
 
 # ------------------------------
-# FUNCTIONS
+# DISCOVERY LOGIC
 # ------------------------------
 
-def get_places(query, api_key, max_res):
-    url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={urllib.parse.quote(query)}&key={api_key}"
-    res = requests.get(url).json()
-    return res.get("results", [])[:max_res]
-
-
-def get_details(place_id, api_key):
-    url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=formatted_phone_number,website&key={api_key}"
-    data = requests.get(url).json().get("result", {})
-    return data.get("formatted_phone_number", "N/A"), data.get("website", "N/A")
-
-
-# ✅ CLEAN BRAND NAME
-def extract_brand_name(full_name):
-    name = re.split(r'[-–—|:,]', full_name)[0]
-
-    remove_words = [
-        'jewellery','jewelry','store','showroom',
-        'pvt','ltd','india','private','limited'
-    ]
-
-    words = name.split()
-    clean = [w for w in words if w.lower() not in remove_words]
-
-    return " ".join(clean[:2]) if clean else name.strip()
-
-
-# ✅ DOMAIN EXTRACTION (BIG UPGRADE)
-def extract_domain_name(website):
-    if not website or website == "N/A":
-        return None
-
-    try:
-        domain = urlparse(website).netloc.lower()
-        domain = domain.replace("www.", "")
-        return domain.split(".")[0]
-    except:
-        return None
-
-
-# ✅ GENERATE SEARCH TERMS
-def generate_search_terms(brand, domain):
-    terms = [brand]
-
-    if domain:
-        terms.append(domain)
-
-    base = domain if domain else brand
-
-    terms.extend([
-        f"{base} india",
-        f"{base} official",
-        f"{base} store"
-    ])
-
-    return list(set(terms))
-
-
-# ✅ META ADS CHECK (ADVANCED)
-def check_meta_ads(brand, website, token):
-    if not token:
-        return 0, "No Token"
-
-    domain = extract_domain_name(website)
-    search_terms = generate_search_terms(brand, domain)
-
+def discover_meta_brands(keyword, token, limit=20):
+    """Finds brands currently advertising on Meta for a specific keyword"""
     url = "https://graph.facebook.com/v19.0/ads_archive"
-
-    total_ads = 0
-    earliest_date = None
-
-    for term in search_terms:
-        params = {
-            "access_token": token,
-            "search_terms": term,
-            "ad_active_status": "ACTIVE",
-            "ad_reached_countries": "['IN']",
-            "fields": "ad_delivery_start_time,ad_creative_body",
-            "limit": 50
-        }
-
-        try:
-            res = requests.get(url, params=params, timeout=8).json()
-            ads = res.get("data", [])
-
-            for ad in ads:
-                text = str(ad)
-
-                # 🔥 MATCH using BRAND OR DOMAIN
-                if brand.lower() in text.lower() or (domain and domain in text.lower()):
-                    total_ads += 1
-
-                    date = ad.get("ad_delivery_start_time")
-                    if date:
-                        if not earliest_date or date < earliest_date:
-                            earliest_date = date
-
-        except:
-            continue
-
-    if total_ads > 0:
-        return total_ads, earliest_date.split("T")[0] if earliest_date else "Active"
-
-    return 0, "No Ads Found"
-
-
-# ✅ GOOGLE ADS CHECK (fallback)
-def check_google_ads(name, location):
+    params = {
+        'access_token': token,
+        'search_terms': keyword,
+        'ad_active_status': 'ACTIVE',
+        'ad_reached_countries': "['IN']",
+        'fields': 'page_name,page_id,ad_delivery_start_time',
+        'limit': limit
+    }
     try:
-        query = f"{name} {location}"
-        url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
-        html = requests.get(url, headers=headers, timeout=5).text.lower()
-
-        return any(x in html for x in ["sponsored", "ads by google", "ad ·"])
+        res = requests.get(url, params=params).json()
+        ads = res.get('data', [])
+        unique_brands = {}
+        for ad in ads:
+            name = ad.get('page_name')
+            if name not in unique_brands:
+                unique_brands[name] = ad.get('ad_delivery_start_time', '').split('T')[0]
+        return unique_brands
     except:
-        return False
+        return {}
 
-
-# ✅ EMAIL EXTRACTION
-def extract_emails(site):
-    if not site or site == "N/A":
-        return "N/A"
-
-    try:
-        html = requests.get(site, headers=headers, timeout=5).text
-        emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", html)
-        return ", ".join(set(emails)) if emails else "Not Found"
-    except:
-        return "Error"
-
+def get_local_info(brand_name, location, api_key):
+    """Finds Google contact info for a brand discovered on Meta"""
+    query = f"{brand_name} in {location}"
+    url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={urllib.parse.quote(query)}&key={api_key}"
+    res = requests.get(url).json().get("results", [])
+    if res:
+        p = res[0]
+        details_url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={p['place_id']}&fields=formatted_phone_number,website&key={api_key}"
+        det = requests.get(details_url).json().get("result", {})
+        return det.get("formatted_phone_number", "N/A"), det.get("website", "N/A"), p.get("formatted_address")
+    return "N/A", "N/A", "No Local Office Found"
 
 # ------------------------------
-# INPUT
+# MAIN INTERFACE
 # ------------------------------
-loc = st.text_input("📍 Location", "Kondapur")
-cat = st.text_input("🏢 Category", "Jewellery Store")
-limit = st.slider("Max Leads", 5, 50, 10)
+loc = st.text_input("📍 Target Location", "Kondapur")
+cat = st.text_input("🏢 Industry Keyword", "Jewellery")
 
-# ------------------------------
-# MAIN
-# ------------------------------
-if st.button("🔍 Run Search"):
-
-    if not google_key:
-        st.error("Enter Google API Key")
+if st.button("🔍 Discover Competitors"):
+    if not meta_token or not google_key:
+        st.error("Please provide both API keys.")
         st.stop()
 
-    query = f"{cat} in {loc}, Hyderabad"
-
-    with st.spinner("🔎 Analyzing businesses..."):
-
-        places = get_places(query, google_key, limit)
+    with st.spinner("Extracting brands from Meta Ad Library..."):
+        # 1. DISCOVER
+        found_brands = discover_meta_brands(cat, meta_token)
+        
         rows = []
-
-        for p in places:
-            full_name = p.get("name")
-            brand = extract_brand_name(full_name)
-
-            phone, site = get_details(p.get("place_id"), google_key)
-
-            # 🔥 META + DOMAIN MATCHING
-            meta_ads, meta_date = check_meta_ads(brand, site, meta_token)
-
-            # 🔥 GOOGLE ADS SIGNAL
-            google_ads = check_google_ads(brand, loc)
-
-            # ✅ FINAL STATUS LOGIC
-            if meta_ads > 0:
-                status = "🟢 Active (Meta Ads)"
-            elif google_ads:
-                status = "🟡 Likely Running Ads (Google)"
-            else:
-                status = "⚪ No Ads Detected"
-
+        for brand, start_date in found_brands.items():
+            # 2. ENRICH
+            phone, site, addr = get_local_info(brand, loc, google_key)
+            
             rows.append({
-                "Brand": brand,
-                "Ad Status": status,
-                "Meta Ads Count": meta_ads,
-                "Active Since": meta_date,
-                "Google Ads": "Yes" if google_ads else "No",
-                "Email": extract_emails(site),
+                "Brand Name": brand,
+                "Ad Status": "🟢 Active on Meta",
+                "Ads Started": start_date,
+                "Local Address": addr,
                 "Phone": phone,
                 "Website": site
             })
 
         df = pd.DataFrame(rows)
-
-        # ✅ FILTER OPTION
-        if only_ads:
-            df = df[df["Ad Status"] != "⚪ No Ads Detected"]
-
         st.dataframe(df, use_container_width=True)
-
-        # ✅ CSV DOWNLOAD (NO ERRORS)
-        csv = df.to_csv(index=False).encode("utf-8")
-
-        st.download_button(
-            "⬇️ Download CSV",
-            csv,
-            file_name=f"leads_{loc}.csv",
-            mime="text/csv"
-        )
+        
+        # 3. EXPORT
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("⬇️ Download Discovery Report", csv, "meta_discovery.csv", "text/csv")

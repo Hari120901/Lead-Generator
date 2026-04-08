@@ -14,12 +14,12 @@ st.title("📊 Lead Generator: Google + Meta Ad Insights")
 with st.sidebar:
     st.header("API Configuration")
     google_key = st.text_input("Google Places API Key", value=st.secrets.get("GOOGLE_API_KEY", ""), type="password")
-    meta_token = st.text_input("Meta Ad Library Access Token", type="password", help="Required for live ad dates and counts.")
+    meta_token = st.text_input("Meta Ad Library Access Token", type="password")
 
 headers = {"User-Agent": "Mozilla/5.0"}
 
 # ------------------------------
-# API & SCRAPING LOGIC
+# LOGIC FUNCTIONS
 # ------------------------------
 
 def get_places(query, api_key, max_res):
@@ -38,47 +38,39 @@ def get_details(place_id, api_key):
     )
 
 def check_meta_ads_detailed(business_name, token):
-    """Queries Meta API with flexible matching to avoid 'Inactive' errors"""
-    if not token: 
-        return 0, "Token Missing"
+    """Smart Search: Strips branch names to find the main brand ads"""
+    if not token: return 0, "Token Missing"
     
-    # Clean the name: Take the first part before hyphens or commas
-    # This turns 'CaratLane - Kondapur' into just 'CaratLane'
-    search_query = business_name.split('-')[0].split(',')[0].strip()
+    # Cleaning: Removes 'Kondapur', 'Mumbai', etc. from the search
+    # Turns 'CaratLane - Kondapur' -> 'CaratLane'
+    clean_name = re.split(r'[-–—,]', business_name)[0].strip()
     
     url = "https://graph.facebook.com/v19.0/ads_archive"
     params = {
         'access_token': token,
-        'search_terms': search_query, # Removed quotes for broader matching
+        'search_terms': clean_name,
         'ad_active_status': 'ACTIVE',
         'ad_reached_countries': "['IN']",
         'fields': 'id,ad_delivery_start_time',
-        'limit': 500 
+        'limit': 500
     }
     try:
         response = requests.get(url, params=params, timeout=10).json()
         ads = response.get('data', [])
-        if not ads:
-            return 0, "No Active Ads"
+        if not ads: return 0, "No Active Ads"
         
-        # Extract and find the oldest ad start date
         start_dates = [a.get('ad_delivery_start_time') for a in ads if a.get('ad_delivery_start_time')]
-        if start_dates:
-            oldest_ad = min(start_dates).split('T')[0]
-            return len(ads), oldest_ad
-        return len(ads), "Date Unknown"
-    except Exception:
-        return 0, "API Error"
+        oldest_ad = min(start_dates).split('T')[0] if start_dates else "Date Unknown"
+        return len(ads), oldest_ad
+    except: return 0, "API Error"
 
 def check_google_ads(name, location):
     try:
         query = f"{name} {location}"
         url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
         html = requests.get(url, headers=headers, timeout=5).text.lower()
-        ad_signals = ["sponsored", "ad ·", "ads by google", "googleadservices"]
-        return any(signal in html for signal in ad_signals)
-    except:
-        return False
+        return any(s in html for s in ["sponsored", "ad ·", "ads by google"])
+    except: return False
 
 def extract_emails(website):
     if not website or website == "N/A": return "N/A"
@@ -86,63 +78,47 @@ def extract_emails(website):
         html = requests.get(website, headers=headers, timeout=5).text
         emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", html)
         return ", ".join(set(emails)) if emails else "Not Found"
-    except:
-        return "Error"
+    except: return "Error"
 
 # ------------------------------
-# MAIN INTERFACE
+# INTERFACE
 # ------------------------------
 
-location = st.text_input("📍 Search Location", value="Kondapur")
-category = st.text_input("🏢 Business Category", value="Jewellery Store")
-max_results = st.slider("Number of Leads", 5, 50, 10)
+location = st.text_input("📍 Location", value="Kondapur")
+category = st.text_input("🏢 Category", value="Jewellery Store")
+max_results = st.slider("Leads", 5, 50, 10)
 
-if st.button("🔍 Generate High-Intent Leads"):
+if st.button("🔍 Run Intelligence Search"):
     if not google_key:
-        st.error("Please enter a Google API Key in the sidebar.")
+        st.error("Enter Google API Key in sidebar.")
         st.stop()
 
     query = f"{category} in {location}, India"
-    
-    with st.spinner(f"Scouting {category} in {location}..."):
+    with st.spinner("Fetching Data..."):
         places = get_places(query, google_key, max_results)
-        lead_data = []
-
+        leads = []
         for p in places:
             name = p.get("name")
-            addr = p.get("formatted_address")
             phone, web, rate, revs = get_details(p.get("place_id"), google_key)
-            
-            # Fetch Live Ad Signals
-            google_active = "Yes" if check_google_ads(name, location) else "No"
+            google_ad = "Yes" if check_google_ads(name, location) else "No"
             meta_count, meta_date = check_meta_ads_detailed(name, meta_token)
             
-            emails = extract_emails(web)
-
-            lead_data.append({
-                "Business Name": name,
-                "Ad Status": f"🟢 {meta_count} Meta Ads" if meta_count > 0 else "⚪ Inactive",
+            leads.append({
+                "Business": name,
+                "Ad Status": f"🟢 {meta_count} Ads" if meta_count > 0 else "⚪ Inactive",
                 "Active Since": meta_date,
-                "Google Ads": google_active,
+                "Google Ads": google_ad,
+                "Email": extract_emails(web),
                 "Phone": phone,
-                "Email": emails,
-                "Website": web,
-                "Rating": f"{rate} ({revs})",
-                "Address": addr
+                "Website": web
             })
 
-        df = pd.DataFrame(lead_data)
-        st.success(f"Found {len(df)} leads!")
+        df = pd.DataFrame(leads)
         st.dataframe(df, use_container_width=True)
 
-        # Excel Export (Ensure openpyxl is in requirements.txt)
+        # Excel Export (Requires openpyxl)
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Leads')
+            df.to_excel(writer, index=False)
         
-        st.download_button(
-            label="⬇️ Download Excel Report",
-            data=buffer.getvalue(),
-            file_name=f"Leads_{location}_{category}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button("⬇️ Download Excel", data=buffer.getvalue(), file_name=f"Leads_{location}.xlsx")

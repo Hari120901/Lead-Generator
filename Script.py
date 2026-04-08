@@ -32,24 +32,28 @@ def get_details(place_id, api_key):
     data = requests.get(url).json().get("result", {})
     return (
         data.get("formatted_phone_number", "N/A"),
-        data.get("website"),
+        data.get("website", "N/A"),
         data.get("rating", "N/A"),
         data.get("user_ratings_total", "N/A")
     )
 
 def check_meta_ads_detailed(business_name, token):
-    """Queries Meta API for count and earliest 'Started Running' date"""
-    if not token:
+    """Queries Meta API with flexible matching to avoid 'Inactive' errors"""
+    if not token: 
         return 0, "Token Missing"
+    
+    # Clean the name: Take the first part before hyphens or commas
+    # This turns 'CaratLane - Kondapur' into just 'CaratLane'
+    search_query = business_name.split('-')[0].split(',')[0].strip()
     
     url = "https://graph.facebook.com/v19.0/ads_archive"
     params = {
         'access_token': token,
-        'search_terms': business_name,
+        'search_terms': search_query, # Removed quotes for broader matching
         'ad_active_status': 'ACTIVE',
         'ad_reached_countries': "['IN']",
         'fields': 'id,ad_delivery_start_time',
-        'limit': 500 # Adjust based on expected volume
+        'limit': 500 
     }
     try:
         response = requests.get(url, params=params, timeout=10).json()
@@ -57,7 +61,7 @@ def check_meta_ads_detailed(business_name, token):
         if not ads:
             return 0, "No Active Ads"
         
-        # Sort to find the oldest running ad (the 'Active Since' date)
+        # Extract and find the oldest ad start date
         start_dates = [a.get('ad_delivery_start_time') for a in ads if a.get('ad_delivery_start_time')]
         if start_dates:
             oldest_ad = min(start_dates).split('T')[0]
@@ -89,7 +93,7 @@ def extract_emails(website):
 # MAIN INTERFACE
 # ------------------------------
 
-location = st.text_input("📍 Search Location", value="Mumbai")
+location = st.text_input("📍 Search Location", value="Kondapur")
 category = st.text_input("🏢 Business Category", value="Jewellery Store")
 max_results = st.slider("Number of Leads", 5, 50, 10)
 
@@ -113,7 +117,6 @@ if st.button("🔍 Generate High-Intent Leads"):
             google_active = "Yes" if check_google_ads(name, location) else "No"
             meta_count, meta_date = check_meta_ads_detailed(name, meta_token)
             
-            # Email Discovery
             emails = extract_emails(web)
 
             lead_data.append({
@@ -132,7 +135,7 @@ if st.button("🔍 Generate High-Intent Leads"):
         st.success(f"Found {len(df)} leads!")
         st.dataframe(df, use_container_width=True)
 
-        # Excel Export
+        # Excel Export (Ensure openpyxl is in requirements.txt)
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Leads')

@@ -6,7 +6,7 @@ import urllib.parse
 import re
 
 # ------------------------------
-# CONFIG & UI
+# CONFIG
 # ------------------------------
 st.set_page_config(page_title="Ad Intelligence Lead Gen Pro", layout="wide")
 st.title("📊 Lead Generator: Google + Meta Ad Insights")
@@ -15,11 +15,12 @@ with st.sidebar:
     st.header("API Configuration")
     google_key = st.text_input("Google Places API Key", type="password")
     meta_token = st.text_input("Meta Ad Library Access Token", type="password")
+    only_ads = st.checkbox("Show Only Businesses Running Ads", value=False)
 
 headers = {"User-Agent": "Mozilla/5.0"}
 
 # ------------------------------
-# CORE FUNCTIONS
+# FUNCTIONS
 # ------------------------------
 
 def get_places(query, api_key, max_res):
@@ -31,7 +32,7 @@ def get_places(query, api_key, max_res):
 def get_details(place_id, api_key):
     url = f"https://maps.googleapis.com/maps/api/place/details/json?place_id={place_id}&fields=formatted_phone_number,website&key={api_key}"
     data = requests.get(url).json().get("result", {})
-    
+
     return (
         data.get("formatted_phone_number", "N/A"),
         data.get("website", "N/A")
@@ -40,14 +41,11 @@ def get_details(place_id, api_key):
 
 def extract_brand_name(full_name):
     """
-    Convert:
-    'CaratLane Jewellery, Kondapur, Hyderabad'
-    -> 'CaratLane'
+    Example:
+    'CaratLane Jewellery, Kondapur, Hyderabad' → 'CaratLane'
     """
-    # Split unwanted parts
     name = re.split(r'[-–—|:,]', full_name)[0]
 
-    # Remove generic words
     remove_words = [
         'jewellery', 'jewelry', 'store', 'showroom',
         'pvt', 'ltd', 'india', 'private', 'limited'
@@ -56,7 +54,6 @@ def extract_brand_name(full_name):
     words = name.split()
     clean_words = [w for w in words if w.lower() not in remove_words]
 
-    # Return ONLY first word (strict brand)
     return clean_words[0] if clean_words else name.strip()
 
 
@@ -65,29 +62,39 @@ def check_meta_ads(brand_name, token):
         return 0, "Token Missing"
 
     url = "https://graph.facebook.com/v19.0/ads_archive"
-    params = {
-        'access_token': token,
-        'search_terms': brand_name,
-        'ad_active_status': 'ACTIVE',
-        'ad_reached_countries': "['IN']",
-        'fields': 'id,ad_delivery_start_time',
-        'limit': 200
-    }
 
-    try:
-        response = requests.get(url, params=params, timeout=10).json()
-        ads = response.get('data', [])
+    # 🔥 Multiple search attempts (fix inactive issue)
+    search_terms_list = [
+        brand_name,
+        f"{brand_name} India",
+        f"{brand_name} Official",
+        f"{brand_name} Store"
+    ]
 
-        if not ads:
-            return 0, "No Active Ads"
+    for term in search_terms_list:
+        params = {
+            'access_token': token,
+            'search_terms': term,
+            'ad_active_status': 'ACTIVE',
+            'ad_reached_countries': "['IN']",
+            'fields': 'id,ad_delivery_start_time',
+            'limit': 100
+        }
 
-        dates = [a.get('ad_delivery_start_time') for a in ads if a.get('ad_delivery_start_time')]
-        oldest = min(dates).split("T")[0] if dates else "Unknown"
+        try:
+            response = requests.get(url, params=params, timeout=10).json()
+            ads = response.get('data', [])
 
-        return len(ads), oldest
+            if ads:
+                dates = [a.get('ad_delivery_start_time') for a in ads if a.get('ad_delivery_start_time')]
+                oldest = min(dates).split("T")[0] if dates else "Unknown"
 
-    except:
-        return 0, "API Error"
+                return len(ads), oldest
+
+        except:
+            continue
+
+    return 0, "No Active Ads"
 
 
 def check_google_ads(name, location):
@@ -95,7 +102,9 @@ def check_google_ads(name, location):
         query = f"{name} {location}"
         url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
         html = requests.get(url, headers=headers, timeout=5).text.lower()
+
         return any(x in html for x in ["sponsored", "ads by google", "ad ·"])
+
     except:
         return False
 
@@ -107,22 +116,23 @@ def extract_emails(website):
     try:
         html = requests.get(website, headers=headers, timeout=5).text
         emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", html)
+
         return ", ".join(set(emails)) if emails else "Not Found"
+
     except:
         return "Error"
 
 
 # ------------------------------
-# UI INPUT
+# INPUT
 # ------------------------------
 
 loc_input = st.text_input("📍 Location", value="Kondapur")
 cat_input = st.text_input("🏢 Category", value="Jewellery Store")
 max_res = st.slider("Max Leads", 5, 50, 10)
 
-
 # ------------------------------
-# MAIN EXECUTION
+# MAIN
 # ------------------------------
 
 if st.button("🔍 Run Intelligence Search"):
@@ -133,7 +143,7 @@ if st.button("🔍 Run Intelligence Search"):
 
     query = f"{cat_input} in {loc_input}, Hyderabad"
 
-    with st.spinner("🔎 Finding businesses and checking ads..."):
+    with st.spinner("🔎 Finding businesses and analyzing ads..."):
 
         places = get_places(query, google_key, max_res)
         results = []
@@ -141,12 +151,12 @@ if st.button("🔍 Run Intelligence Search"):
         for p in places:
             full_name = p.get("name")
 
-            # ✅ Clean Brand Name
+            # ✅ Clean brand
             brand_name = extract_brand_name(full_name)
 
             phone, website = get_details(p.get("place_id"), google_key)
 
-            # ✅ Meta Ads (using CLEAN brand name)
+            # ✅ Meta Ads (improved detection)
             meta_count, meta_date = check_meta_ads(brand_name, meta_token)
 
             # ✅ Google Ads
@@ -164,15 +174,18 @@ if st.button("🔍 Run Intelligence Search"):
 
         df = pd.DataFrame(results)
 
-        # Display table
+        # ✅ Filter only active advertisers
+        if only_ads:
+            df = df[df["Meta Ads Running"] > 0]
+
         st.dataframe(df, use_container_width=True)
 
         # ------------------------------
-        # EXCEL DOWNLOAD
+        # EXCEL EXPORT (FIXED)
         # ------------------------------
         buffer = BytesIO()
 
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, sheet_name="Leads")
 
         st.download_button(

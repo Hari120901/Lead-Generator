@@ -6,7 +6,7 @@ import re
 
 # UI Setup
 st.set_page_config(page_title="Lead Gen Pro", layout="wide")
-st.title("📊 Lead Generator: Google + Meta Ads")
+st.title("📊 CORPOS: Lead Generator")
 
 with st.sidebar:
     st.header("API Configuration")

@@ -39,7 +39,7 @@ def check_meta_ads(brand_name, token):
             error_msg = res['error'].get('message', '')
             if "permission" in error_msg.lower():
                 return 0, "🔒 ID Verification Required on FB"
-            return 0, f"Error: {error_msg[:20]}"
+            return 0, f"Error: {error_msg[:1000]}"
             
         ads = res.get("data", [])
         if not ads:

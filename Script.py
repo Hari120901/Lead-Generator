@@ -61,7 +61,7 @@ if st.button("🔍 Run Search"):
         with st.spinner("Fetching leads from Google and checking Meta..."):
             g_url = f"https://maps.googleapis.com/maps/api/place/textsearch/json?query={urllib.parse.quote(query)}&key={google_key}"
             g_data = requests.get(g_url).json()
-            places = g_data.get("results", [])[:50]
+            places = g_data.get("results", [])[:1000]
             
             if not places:
                 st.warning("No businesses found on Google for this location.")

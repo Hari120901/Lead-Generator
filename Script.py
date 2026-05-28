@@ -184,7 +184,7 @@ if st.button("🚀 Generate Leads"):
         st.error("Please enter Google Places API Key")
         st.stop()
 
-    search_query = f"{category} in {location}, Hyderabad"
+    search_query = f"{category} in {location}, India"
 
     with st.spinner("Fetching businesses and checking Meta ads..."):
 
